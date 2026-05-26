@@ -1,0 +1,6 @@
+{
+    "app_name": "LucidGrasp Test",
+    "version": "1.0.0",
+    "features": ["calculator", "greeter"],
+    "debug_mode": true
+}
