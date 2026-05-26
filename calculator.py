@@ -6,6 +6,9 @@ def multiply(a, b):
     """Return the product of a and b."""
     return a * b
 
+def subtract(a, b):    # ← NEW FUNCTION
+    return a - b
+
 def divide(a, b):
     """Return the quotient of a and b. Raises error if b is zero."""
     if b == 0:
