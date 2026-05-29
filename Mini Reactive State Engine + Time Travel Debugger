@@ -1,0 +1,291 @@
+/**
+ * Mini Reactive State Engine + Time Travel Debugger
+ * Complex JavaScript Example
+ */
+
+class EventEmitter {
+    constructor() {
+        this.events = new Map();
+    }
+
+    on(event, listener) {
+        if (!this.events.has(event)) {
+            this.events.set(event, new Set());
+        }
+
+        this.events.get(event).add(listener);
+
+        return () => this.off(event, listener);
+    }
+
+    off(event, listener) {
+        this.events.get(event)?.delete(listener);
+    }
+
+    emit(event, ...args) {
+        this.events.get(event)?.forEach(listener => {
+            try {
+                listener(...args);
+            } catch (err) {
+                console.error(`[Emitter Error] ${event}`, err);
+            }
+        });
+    }
+}
+
+class ReactiveStore extends EventEmitter {
+    #state;
+    #history = [];
+    #pointer = -1;
+    #middlewares = [];
+
+    constructor(initialState = {}) {
+        super();
+
+        this.#state = this.#deepProxy(initialState);
+        this.#saveSnapshot();
+    }
+
+    use(middleware) {
+        this.#middlewares.push(middleware);
+    }
+
+    get state() {
+        return this.#state;
+    }
+
+    dispatch(action) {
+        let context = {
+            action,
+            state: structuredClone(this.#state)
+        };
+
+        for (const middleware of this.#middlewares) {
+            context = middleware(context) || context;
+        }
+
+        this.#applyAction(context.action);
+    }
+
+    undo() {
+        if (this.#pointer <= 0) return;
+
+        this.#pointer--;
+        this.#state = this.#deepProxy(
+            structuredClone(this.#history[this.#pointer])
+        );
+
+        this.emit("undo", this.#state);
+    }
+
+    redo() {
+        if (this.#pointer >= this.#history.length - 1) return;
+
+        this.#pointer++;
+        this.#state = this.#deepProxy(
+            structuredClone(this.#history[this.#pointer])
+        );
+
+        this.emit("redo", this.#state);
+    }
+
+    #applyAction(action) {
+        const { type, payload } = action;
+
+        switch (type) {
+            case "SET":
+                this.#setNestedValue(payload.path, payload.value);
+                break;
+
+            case "MERGE":
+                Object.assign(this.#state, payload);
+                break;
+
+            case "RESET":
+                for (const key of Object.keys(this.#state)) {
+                    delete this.#state[key];
+                }
+                break;
+
+            default:
+                console.warn(`Unknown action type: ${type}`);
+        }
+
+        this.#saveSnapshot();
+        this.emit("change", structuredClone(this.#state));
+    }
+
+    #setNestedValue(path, value) {
+        const keys = path.split(".");
+        let current = this.#state;
+
+        while (keys.length > 1) {
+            const key = keys.shift();
+
+            if (!(key in current)) {
+                current[key] = {};
+            }
+
+            current = current[key];
+        }
+
+        current[keys[0]] = value;
+    }
+
+    #saveSnapshot() {
+        this.#history = this.#history.slice(0, this.#pointer + 1);
+
+        this.#history.push(structuredClone(this.#state));
+
+        this.#pointer++;
+    }
+
+    #deepProxy(obj, path = []) {
+        if (typeof obj !== "object" || obj === null) {
+            return obj;
+        }
+
+        return new Proxy(obj, {
+            get: (target, prop) => {
+                const value = target[prop];
+
+                return this.#deepProxy(value, [...path, prop]);
+            },
+
+            set: (target, prop, value) => {
+                const fullPath = [...path, prop].join(".");
+
+                console.log(
+                    `%c[Reactive Update]`,
+                    "color: cyan",
+                    `${fullPath} =`,
+                    value
+                );
+
+                target[prop] = value;
+
+                this.emit("proxy:set", {
+                    path: fullPath,
+                    value
+                });
+
+                return true;
+            },
+
+            deleteProperty: (target, prop) => {
+                delete target[prop];
+
+                this.emit("proxy:delete", {
+                    path: [...path, prop].join(".")
+                });
+
+                return true;
+            }
+        });
+    }
+}
+
+// ----------------------------
+// Middleware Examples
+// ----------------------------
+
+const loggerMiddleware = ({ action, state }) => {
+    console.group(`[Action]: ${action.type}`);
+    console.log("Previous State:", state);
+    console.log("Payload:", action.payload);
+    console.groupEnd();
+
+    return { action, state };
+};
+
+const timestampMiddleware = ({ action, state }) => {
+    return {
+        state,
+        action: {
+            ...action,
+            meta: {
+                timestamp: Date.now()
+            }
+        }
+    };
+};
+
+// ----------------------------
+// Usage
+// ----------------------------
+
+const store = new ReactiveStore({
+    user: {
+        name: "Sprint",
+        level: 99
+    },
+    theme: "dark"
+});
+
+store.use(loggerMiddleware);
+store.use(timestampMiddleware);
+
+store.on("change", newState => {
+    console.log("%c[STATE CHANGED]", "color: lime", newState);
+});
+
+store.on("proxy:set", data => {
+    console.log("%c[PROXY EVENT]", "color: orange", data);
+});
+
+// Dispatch Actions
+store.dispatch({
+    type: "SET",
+    payload: {
+        path: "user.name",
+        value: "Neo"
+    }
+});
+
+store.dispatch({
+    type: "SET",
+    payload: {
+        path: "user.skills",
+        value: ["JS", "AI", "Systems"]
+    }
+});
+
+store.dispatch({
+    type: "MERGE",
+    payload: {
+        version: "2.1.0"
+    }
+});
+
+// Direct reactive mutation
+store.state.user.level = 100;
+
+// Time travel debugging
+store.undo();
+store.redo();
+
+// Async simulation
+(async () => {
+    const fakeFetch = () =>
+        new Promise(resolve =>
+            setTimeout(() => resolve({
+                success: true,
+                data: {
+                    cpu: "i9",
+                    ram: "64GB"
+                }
+            }), 1500)
+        );
+
+    console.log("Fetching system data...");
+
+    const result = await fakeFetch();
+
+    store.dispatch({
+        type: "SET",
+        payload: {
+            path: "system.specs",
+            value: result.data
+        }
+    });
+})();
